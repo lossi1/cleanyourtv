@@ -1,0 +1,39 @@
+name: apk
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build
+        working-directory: launcher
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+          ./gradlew assembleRelease -q --console=plain
+      - name: Sign if needed
+        run: |
+          set -e
+          cd launcher/app/build/outputs/apk/release
+          ls -la
+          APK=$(ls *.apk | head -n1)
+          if echo "$APK" | grep -q unsigned; then
+            keytool -genkeypair -keystore /tmp/k.jks -storepass android -keypass android -alias k -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=local"
+            AS=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -n1)apksigner
+            $AS sign --ks /tmp/k.jks --ks-pass pass:android --key-pass pass:android --out /tmp/signed.apk "$APK"
+            cp /tmp/signed.apk app-release.apk
+          else
+            [ "$APK" = app-release.apk ] || cp "$APK" app-release.apk
+          fi
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete cleanyourtv --yes --cleanup-tag || true
+          gh release create cleanyourtv launcher/app/build/outputs/apk/release/app-release.apk --title cleanyourtv --notes "build"
